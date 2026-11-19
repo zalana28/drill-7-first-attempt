@@ -30,6 +30,8 @@ function createDb(dbPath) {
   db.pragma('journal_mode = DELETE');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA_SQL);
+  // Drill #8 F4: the database holds the user's own notes — owner-only.
+  fs.chmodSync(dbPath, 0o600);
   return db;
 }
 

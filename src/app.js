@@ -27,6 +27,7 @@ function validateNote(body) {
 function createApp(dbPath) {
   const db = createDb(dbPath);
   const app = express();
+  app.disable('x-powered-by'); // Drill #8 F3: do not fingerprint the framework.
   app.use(express.json({ limit: '100kb' }));
 
   // Fail-closed guard for every write: the DB file must exist on disk.

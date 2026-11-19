@@ -7,7 +7,7 @@
     "db:integrity": "node scripts/integrity.js",
     "restore": "node scripts/restore.js",
     "start": "node src/server.js",
-    "test": "node --test tests/notevault.test.js"
+    "test": "node --test tests/notevault.test.js tests/redteam.test.js"
   },
   "type": "commonjs",
   "version": "1.0.0",

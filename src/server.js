@@ -6,7 +6,16 @@ const { createApp } = require('./app');
 const PORT = Number(process.env.PORT || 18080);
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'notevault.db');
 
-const { app, db } = createApp(DB_PATH);
+let app;
+let db;
+try {
+  ({ app, db } = createApp(DB_PATH));
+} catch (err) {
+  // Drill #8: a corrupt/unreadable database must fail with a clean error,
+  // never an uncaught stack trace.
+  console.error(JSON.stringify({ ok: false, error: 'DB_UNUSABLE', message: String(err.message || err) }));
+  process.exit(1);
+}
 
 const server = app.listen(PORT, () => {
   console.log(JSON.stringify({ event: 'listening', port: PORT, pid: process.pid, dbPath: DB_PATH }));

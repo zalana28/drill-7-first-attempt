@@ -40,7 +40,20 @@ async function main() {
     db.close();
   }
 
-  const check = new Database(dest, { readonly: true });
+  try {
+    fs.chmodSync(dest, 0o600); // Drill #8 F4: owner-only.
+  } catch {
+    // chmod is hardening, not data — continue if the filesystem refuses.
+  }
+
+  let check;
+  try {
+    check = new Database(dest, { readonly: true });
+  } catch (err) {
+    console.error(JSON.stringify({ ok: false, error: 'BACKUP_UNREADABLE', dest, message: String(err.message || err) }));
+    process.exitCode = 1;
+    return;
+  }
   try {
     const integrity = check.prepare('PRAGMA integrity_check').get().integrity_check;
     const notes = check.prepare('SELECT COUNT(*) AS n FROM notes').get().n;
@@ -50,6 +63,10 @@ async function main() {
       return;
     }
     console.log(JSON.stringify({ ok: true, dest, notes, integrity }));
+  } catch (err) {
+    // Drill #8 F2: verification failures are clean JSON, never a stack trace.
+    console.error(JSON.stringify({ ok: false, error: 'BACKUP_UNREADABLE', dest, message: String(err.message || err) }));
+    process.exitCode = 1;
   } finally {
     check.close();
   }
