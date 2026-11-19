@@ -9,9 +9,15 @@
  *
  * Safety rules (B5 / Challenge C, hardened in Drill #8):
  * 1. VERIFY THE BACKUP FIRST. The backup is opened read-only and checked
- *    (integrity_check + row count) BEFORE the live database is touched.
- *    A corrupt or non-database backup used to overwrite the live file and
- *    only fail afterwards (Drill #8 F2) — now it is a clean no-op.
+ *    (integrity_check + row count + SCHEMA) BEFORE the live database is
+ *    touched. A corrupt or non-database backup used to overwrite the live
+ *    file and only fail afterwards (Drill #8 F2) — now it is a clean
+ *    no-op. Schema check (Drill #8 follow-up, F5): the backup's
+ *    sqlite_master must contain exactly table:notes and
+ *    table:sqlite_sequence — ANY trigger (type='trigger'), view, index,
+ *    or extra table is rejected. A table-only whitelist is NOT enough:
+ *    a trigger attached to the notes table itself passes it, so triggers
+ *    are rejected explicitly, whatever they attach to.
  * 2. REFUSE while anything listens on $PORT. The check is a raw TCP
  *    connect, not an HTTP request: a hung server that holds the port but
  *    never answers /health used to slip past the old fetch-based check
@@ -61,6 +67,27 @@ function verifyDbFile(filePath, label) {
   try {
     const integrity = check.prepare('PRAGMA integrity_check').get().integrity_check;
     if (integrity !== 'ok') throw new Error(`${label}: integrity_check: ${integrity}`);
+    // F5: schema validation. The only objects a notevault database may
+    // contain are the notes table and sqlite_sequence (AUTOINCREMENT).
+    // Triggers are rejected explicitly and unconditionally — a trigger
+    // attached to notes itself would pass a table-only whitelist, and a
+    // trigger is executable code that runs on the next DML after restore.
+    // Rejected (fail closed), never stripped: stripping would silently
+    // change what the backup means.
+    const objects = check.prepare('SELECT type, name FROM sqlite_master ORDER BY type, name').all();
+    const triggers = objects.filter((o) => o.type === 'trigger');
+    if (triggers.length > 0) {
+      throw new Error(
+        `${label}: schema rejected: ${triggers.length} trigger(s) present (${triggers.map((t) => t.name).join(', ')}) — triggers are never allowed in a notevault backup`
+      );
+    }
+    const allowed = new Set(['table:notes', 'table:sqlite_sequence']);
+    const unexpected = objects.filter((o) => !allowed.has(`${o.type}:${o.name}`));
+    if (unexpected.length > 0) {
+      throw new Error(
+        `${label}: schema rejected: unexpected object(s) ${unexpected.map((o) => `${o.type}:${o.name}`).join(', ')} — expected only table:notes and table:sqlite_sequence`
+      );
+    }
     const notes = check.prepare('SELECT COUNT(*) AS n FROM notes').get().n;
     return { integrity, notes };
   } catch (err) {

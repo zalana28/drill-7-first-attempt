@@ -14,6 +14,13 @@
  *  F3  X-Powered-By: Express on every response (framework fingerprinting).
  *  F4  database and backup files were created group/world-readable under
  *      a permissive umask. Now owner-only (0600).
+ *  F5  (follow-up, 2026-11-19) restore verified integrity + row count but
+ *      never looked at the schema: a backup carrying a trigger would
+ *      restore cleanly, and the trigger would fire on the next write.
+ *      A table-only whitelist does NOT close this — a trigger attached to
+ *      the notes table itself passes it. Now verifyDbFile rejects ANY
+ *      trigger and any object outside {table:notes, table:sqlite_sequence}.
+ *      Proven with a benign canary trigger (scripts/demo-canary-restore.js).
  *
  * Also locked in: SQL injection is stored literally (parameterized
  * queries), __proto__ payloads do not pollute Object.prototype, oversized
@@ -26,6 +33,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const Database = require('better-sqlite3');
 const { createApp } = require('../src/app');
 
 const ROOT = path.join(__dirname, '..');
@@ -201,6 +209,65 @@ describe('F2: restore verifies before overwriting', () => {
     assert.equal(JSON.parse(r.stdout).error, 'NOT_A_DATABASE');
     assert.doesNotMatch(r.stdout + r.stderr, /SqliteError/);
     assert.doesNotMatch(r.stdout + r.stderr, /\n    at /);
+  });
+});
+
+describe('F5: restore rejects executable schema', () => {
+  it('a backup with a trigger ON notes itself is rejected; the live DB survives', async () => {
+    await createNote('survivor-one');
+    await createNote('survivor-two');
+    const backupFile = path.join(tmpDir, 'canary-backup.db');
+    const b = runScript('backup.js', [backupFile], { DB_PATH: dbPath });
+    assert.equal(b.status, 0, `backup failed: ${b.stderr}`);
+
+    // Benign canary: a trigger on notes that only writes to a canary table.
+    // It is LIVE (proven to fire in scripts/demo-canary-restore.js), not inert.
+    const canary = new Database(backupFile);
+    canary.exec(`CREATE TABLE canary_log (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT NOT NULL);
+      CREATE TRIGGER trg_canary_after_insert AFTER INSERT ON notes
+      BEGIN INSERT INTO canary_log (note) VALUES ('canary-fired'); END;`);
+    canary.close();
+
+    await stopServer();
+    const r = runScript('restore.js', [backupFile, dbPath], { PORT: '0', DB_PATH: dbPath });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /BACKUP_INVALID/);
+    assert.match(r.stderr, /trg_canary_after_insert/);
+    assert.match(r.stderr, /trigger/);
+    assert.doesNotMatch(r.stderr, /SqliteError/);
+    assert.doesNotMatch(r.stderr, /\n    at /);
+
+    // The live file is byte-identical to before: still a valid DB, 2 notes.
+    const check = runScript('integrity.js', [dbPath], { DB_PATH: dbPath });
+    assert.equal(check.status, 0, `integrity failed: ${check.stdout} ${check.stderr}`);
+    assert.equal(JSON.parse(check.stdout).notes, 2);
+
+    await startServer();
+    const health = await req('GET', '/health');
+    assert.equal(health.status, 200);
+    assert.equal(health.json.notes, 2);
+  });
+
+  it('a backup with a benign extra table is rejected; the live DB survives', async () => {
+    await createNote('survivor-one');
+    const backupFile = path.join(tmpDir, 'extra-table-backup.db');
+    const b = runScript('backup.js', [backupFile], { DB_PATH: dbPath });
+    assert.equal(b.status, 0, `backup failed: ${b.stderr}`);
+
+    const extra = new Database(backupFile);
+    extra.exec('CREATE TABLE harmless_extra (id INTEGER PRIMARY KEY, v TEXT);');
+    extra.close();
+
+    await stopServer();
+    const r = runScript('restore.js', [backupFile, dbPath], { PORT: '0', DB_PATH: dbPath });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /BACKUP_INVALID/);
+    assert.match(r.stderr, /harmless_extra/);
+
+    await startServer();
+    const health = await req('GET', '/health');
+    assert.equal(health.status, 200);
+    assert.equal(health.json.notes, 1);
   });
 });
 

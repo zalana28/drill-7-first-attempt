@@ -63,7 +63,7 @@ Restore safety rules:
 ## Security (Drill #8 — self-red-team, 2026-11-19)
 
 Attacked my own service (own sandbox instance, ~80 requests, no DoS /
-destructive / exfiltration). Four real findings, all fixed, all locked in
+destructive / exfiltration). Five real findings, all fixed, all locked in
 by `tests/redteam.test.js`:
 
 | # | Finding | Fix |
@@ -72,6 +72,7 @@ by `tests/redteam.test.js`:
 | F2 | Restore overwrote the live DB *before* verifying the backup; a non-database backup destroyed the live file and crashed the script with an uncaught `SqliteError`. | The backup is verified first (integrity + count); failures are clean JSON and leave the live DB untouched; a failed restore rolls back from the pre-restore snapshot. `integrity.js` and `backup.js` got the same clean-error treatment. |
 | F3 | `X-Powered-By: Express` on every response. | `app.disable('x-powered-by')`. |
 | F4 | Database and backup files were group/world-readable under a permissive umask. | Files are created owner-only (`0600`). |
+| F5 | (follow-up) Restore verified integrity + row count but never looked at the schema: a backup carrying a trigger would restore cleanly and fire on the next write. A table-only whitelist does not close this — a trigger on `notes` itself passes it. | `verifyDbFile` now rejects ANY trigger (`type='trigger'`) and any object outside `{table:notes, table:sqlite_sequence}`; fail closed, never stripped. Proven with a benign canary trigger (`scripts/demo-canary-restore.js`). |
 
 Tested and held (no finding): SQL injection (parameterized queries —
 injection is stored literally), id validation, body limit (413),
@@ -82,7 +83,7 @@ contiguous), backup to a symlinked destination (refused: target is not
 a database), and `/health` / error bodies (no paths, no stack traces).
 No authentication by design (drill #7 scope) — that is not a finding.
 
-## Tests (19, `node --test`)
+## Tests (21, `node --test`)
 
 | Group | Tests |
 |---|---|
@@ -91,6 +92,7 @@ No authentication by design (drill #7 scope) — that is not a finding.
 | race | 20 parallel creates all persist with distinct ids |
 | db-missing | renaming the DB file → health and writes 503; restoring the file brings data back |
 | backup/restore CLI | backup → delete DB → restore (server stopped) → row count intact |
+| red-team (F1–F5) | hung-listener refusal, non-DB backup no-op, clean-error integrity, 0600 modes, trigger + extra-table backup refusal |
 
 ## Design notes
 
