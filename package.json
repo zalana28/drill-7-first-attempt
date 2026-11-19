@@ -1,0 +1,18 @@
+{
+  "description": "Notes service: Express + SQLite CRUD with a /health that checks the real database, plus CLI backup/restore. Drill #7 — first-attempt validity.",
+  "main": "src/server.js",
+  "name": "notevault",
+  "scripts": {
+    "backup": "node scripts/backup.js",
+    "db:integrity": "node scripts/integrity.js",
+    "restore": "node scripts/restore.js",
+    "start": "node src/server.js",
+    "test": "node --test tests/notevault.test.js"
+  },
+  "type": "commonjs",
+  "version": "1.0.0",
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^4.22.3"
+  }
+}
